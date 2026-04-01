@@ -82,7 +82,7 @@ async function runChecks() {
           .setFooter({ text: "WebWatch Bot" })
           .setTimestamp();
 
-        await channel.send({ embeds: [embed] });
+        await channel.send({ content: "@everyone", embeds: [embed] });
       }
     } catch (err) {
       state.failCount = (state.failCount || 0) + 1;
