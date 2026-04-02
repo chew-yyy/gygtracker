@@ -59,22 +59,20 @@ async function runChecks() {
         console.log(`[BASELINE] ${url} — ${content.length} chars`);
       } else if (newHash !== state.hash) {
         console.log(`[CHANGE] ${url}`);
-        const oldSize = state.size ?? 0;
-        const sizeDiff = content.length - oldSize;
         state.hash = newHash;
         state.size = content.length;
 
         const embed = new EmbedBuilder()
-          .setColor(0xff4444)
-          .setTitle("🔔 Website Changed!")
-          .setURL(url)
-          .setDescription(`A change was detected on the monitored page.`)
+          .setColor(0x00ff99)
+          .setTitle("🚨 RESTOCK DETECTED!")
+          .setDescription(`@everyone A restock has been detected — act fast before it sells out!`)
           .addFields(
-            { name: "🌐 URL", value: `\`${url}\``, inline: false },
-            { name: "📏 Size Change", value: `${oldSize.toLocaleString()} → ${content.length.toLocaleString()} chars (${sizeDiff >= 0 ? "+" : ""}${sizeDiff})`, inline: true },
-            { name: "🕐 Detected At", value: `<t:${Math.floor(Date.now() / 1000)}:T>`, inline: true }
+            { name: "🌐 Restock Detected On", value: `\`${url}\``, inline: false },
+            { name: "🛒 Purchase Now", value: `[Click here to buy](${url})`, inline: false },
+            { name: "🕐 Detected At", value: `<t:${Math.floor(Date.now() / 1000)}:T>`, inline: true },
+            { name: "⚡ Act Fast", value: "Stock may sell out quickly!", inline: true }
           )
-          .setFooter({ text: "WebWatch Bot" })
+          .setFooter({ text: "WebWatch Bot • Restock Alert" })
           .setTimestamp();
 
         await channel.send({ content: "@everyone", embeds: [embed] });
