@@ -248,7 +248,7 @@ client.on("error", (err) => console.error("Client error:", err));
 
 client.once("ready", () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
-  client.user.setActivity("for changes 🔍", { type: 3 });
+  client.user.setActivity("Made by Don", { type: 3 });
 });
 
 client.login(BOT_TOKEN);
