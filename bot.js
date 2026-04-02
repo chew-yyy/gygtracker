@@ -116,6 +116,7 @@ client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
   const [cmd, ...args] = message.content.trim().split(/\s+/);
 
+  // !watch <url>
   if (cmd === "!watch") {
     const url = args[0];
     if (!url || !url.startsWith("http")) {
@@ -139,6 +140,7 @@ client.on("messageCreate", async (message) => {
     message.reply({ embeds: [embed] });
   }
 
+  // !unwatch <url>
   else if (cmd === "!unwatch") {
     const url = args[0];
     if (!url || !watchList.has(url)) {
@@ -149,6 +151,7 @@ client.on("messageCreate", async (message) => {
     message.reply(`🛑 Stopped watching \`${url}\``);
   }
 
+  // !watchlist
   else if (cmd === "!watchlist") {
     if (watchList.size === 0) {
       return message.reply("📭 No URLs are currently being watched. Use `!watch <url>` to start.");
@@ -167,12 +170,14 @@ client.on("messageCreate", async (message) => {
     message.reply({ embeds: [embed] });
   }
 
+  // !clearwatch
   else if (cmd === "!clearwatch") {
     watchList.clear();
     stopMonitor();
     message.reply("🧹 Cleared all watched URLs.");
   }
 
+  // !purge <amount>
   else if (cmd === "!purge") {
     const amount = parseInt(args[0]);
     if (!amount || amount < 1 || amount > 100) {
@@ -190,10 +195,38 @@ client.on("messageCreate", async (message) => {
     }
   }
 
+  // !restock <website> <purchase_url>
+  else if (cmd === "!restock") {
+    const website = args[0];
+    const purchaseUrl = args[1];
+
+    if (!website || !purchaseUrl) {
+      return message.reply("❌ Usage: `!restock <website> <purchase_url>`\nExample: `!restock https://sneakersite.com https://sneakersite.com/product/yeezy`");
+    }
+
+    const embed = new EmbedBuilder()
+      .setColor(0x00ff99)
+      .setTitle("🚨 RESTOCK DETECTED!")
+      .setDescription(`@everyone A restock has been detected — act fast before it sells out!`)
+      .addFields(
+        { name: "🌐 Restock Detected On", value: `\`${website}\``, inline: false },
+        { name: "🛒 Purchase Now", value: `[Click here to buy](${purchaseUrl})`, inline: false },
+        { name: "🕐 Detected At", value: `<t:${Math.floor(Date.now() / 1000)}:T>`, inline: true },
+        { name: "⚡ Act Fast", value: "Stock may sell out quickly!", inline: true }
+      )
+      .setFooter({ text: "WebWatch Bot • Restock Alert" })
+      .setTimestamp();
+
+    await message.channel.send({ content: "@everyone", embeds: [embed] });
+    message.delete().catch(() => {});
+  }
+
+  // !ping
   else if (cmd === "!ping") {
     message.reply(`🏓 Pong! Latency: **${client.ws.ping}ms**`);
   }
 
+  // !help / !cmds
   else if (cmd === "!help" || cmd === "!cmds") {
     const embed = new EmbedBuilder()
       .setColor(0x5865f2)
@@ -204,6 +237,7 @@ client.on("messageCreate", async (message) => {
         { name: "`!watchlist`", value: "List all currently monitored URLs" },
         { name: "`!clearwatch`", value: "Stop monitoring all URLs" },
         { name: "`!purge <1-100>`", value: "Delete a number of messages in this channel" },
+        { name: "`!restock <website> <purchase_url>`", value: "Manually send a restock alert with a purchase link" },
         { name: "`!ping`", value: "Check bot latency" },
         { name: "`!help` / `!cmds`", value: "Show this command list" },
       )
