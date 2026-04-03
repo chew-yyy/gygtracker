@@ -2,12 +2,12 @@ require("dotenv").config();
 const { Client, GatewayIntentBits, EmbedBuilder, PermissionsBitField } = require("discord.js");
 const https = require("https");
 const http = require("http");
-const crypto = require("crypto");
 
 // ─── CONFIG ──────────────────────────────────────────────────────────────────
 const BOT_TOKEN = process.env.DISCORD_TOKEN;
 const CHANNEL_ID = process.env.CHANNEL_ID;
 const CHECK_INTERVAL_MS = 1000;
+const IN_STOCK_TEXT = "In Stock - Ready for instant delivery";
 // ─────────────────────────────────────────────────────────────────────────────
 
 const client = new Client({
@@ -18,6 +18,7 @@ const client = new Client({
   ],
 });
 
+// watchList stores: url => { inStock: null|bool, failCount: 0, lastChecked: null }
 const watchList = new Map();
 let monitorInterval = null;
 
@@ -37,10 +38,6 @@ function fetchPage(url) {
   });
 }
 
-function hashContent(content) {
-  return crypto.createHash("md5").update(content).digest("hex");
-}
-
 async function runChecks() {
   if (watchList.size === 0) return;
   const channel = client.channels.cache.get(CHANNEL_ID);
@@ -49,18 +46,21 @@ async function runChecks() {
   for (const [url, state] of watchList.entries()) {
     try {
       const content = await fetchPage(url);
-      const newHash = hashContent(content);
+      const isInStock = content.includes(IN_STOCK_TEXT);
       state.lastChecked = new Date();
       state.failCount = 0;
 
-      if (state.hash === null) {
-        state.hash = newHash;
-        state.size = content.length;
-        console.log(`[BASELINE] ${url} — ${content.length} chars`);
-      } else if (newHash !== state.hash) {
-        console.log(`[CHANGE] ${url}`);
-        state.hash = newHash;
-        state.size = content.length;
+      // First check — just set baseline
+      if (state.inStock === null) {
+        state.inStock = isInStock;
+        console.log(`[BASELINE] ${url} — ${isInStock ? "IN STOCK" : "OUT OF STOCK"}`);
+        return;
+      }
+
+      // Was out of stock, now in stock → RESTOCK!
+      if (!state.inStock && isInStock) {
+        state.inStock = true;
+        console.log(`[RESTOCK] ${url}`);
 
         const embed = new EmbedBuilder()
           .setColor(0x00ff99)
@@ -77,6 +77,26 @@ async function runChecks() {
 
         await channel.send({ content: "@everyone", embeds: [embed] });
       }
+
+      // Was in stock, now out of stock → OUT OF STOCK alert
+      else if (state.inStock && !isInStock) {
+        state.inStock = false;
+        console.log(`[OUT OF STOCK] ${url}`);
+
+        const embed = new EmbedBuilder()
+          .setColor(0xff4444)
+          .setTitle("❌ Out of Stock")
+          .setDescription(`The item is now out of stock.`)
+          .addFields(
+            { name: "🌐 Website", value: `\`${url}\``, inline: false },
+            { name: "🕐 Went Out of Stock", value: `<t:${Math.floor(Date.now() / 1000)}:T>`, inline: true }
+          )
+          .setFooter({ text: "WebWatch Bot • Stock Alert" })
+          .setTimestamp();
+
+        await channel.send({ embeds: [embed] });
+      }
+
     } catch (err) {
       state.failCount = (state.failCount || 0) + 1;
       if (state.failCount === 1 || state.failCount % 30 === 0) {
@@ -123,7 +143,7 @@ client.on("messageCreate", async (message) => {
     if (watchList.has(url)) {
       return message.reply(`⚠️ Already watching \`${url}\``);
     }
-    watchList.set(url, { hash: null, lastChecked: null, failCount: 0 });
+    watchList.set(url, { inStock: null, lastChecked: null, failCount: 0 });
     if (!monitorInterval) startMonitor();
 
     const embed = new EmbedBuilder()
@@ -132,7 +152,7 @@ client.on("messageCreate", async (message) => {
       .setDescription(`\`${url}\``)
       .addFields(
         { name: "Check Interval", value: `Every ${CHECK_INTERVAL_MS / 1000}s`, inline: true },
-        { name: "Total Watched", value: String(watchList.size), inline: true }
+        { name: "Monitoring For", value: `"${IN_STOCK_TEXT}"`, inline: false }
       )
       .setTimestamp();
     message.reply({ embeds: [embed] });
@@ -157,8 +177,8 @@ client.on("messageCreate", async (message) => {
     const lines = [];
     for (const [url, state] of watchList.entries()) {
       const lastChecked = state.lastChecked ? `<t:${Math.floor(state.lastChecked.getTime() / 1000)}:R>` : "Not yet";
-      const status = state.failCount > 0 ? `⚠️ ${state.failCount} errors` : "✅ OK";
-      lines.push(`**${url}**\nLast checked: ${lastChecked} | Status: ${status}`);
+      const stockStatus = state.inStock === null ? "⏳ Checking..." : state.inStock ? "✅ In Stock" : "❌ Out of Stock";
+      lines.push(`**${url}**\nStatus: ${stockStatus} | Last checked: ${lastChecked}`);
     }
     const embed = new EmbedBuilder()
       .setColor(0x5865f2)
@@ -173,6 +193,38 @@ client.on("messageCreate", async (message) => {
     watchList.clear();
     stopMonitor();
     message.reply("🧹 Cleared all watched URLs.");
+  }
+
+  // !stock <url>
+  else if (cmd === "!stock") {
+    const url = args[0];
+    if (!url || !url.startsWith("http")) {
+      return message.reply("❌ Please provide a valid URL. Example: `!stock https://example.com/product`");
+    }
+
+    const checking = await message.reply("🔍 Checking stock status...");
+
+    try {
+      const content = await fetchPage(url);
+      const isInStock = content.includes(IN_STOCK_TEXT);
+
+      const embed = new EmbedBuilder()
+        .setColor(isInStock ? 0x00ff99 : 0xff4444)
+        .setTitle(isInStock ? "✅ In Stock!" : "❌ Out of Stock")
+        .setDescription(isInStock
+          ? `The item is currently **in stock** and ready for instant delivery!`
+          : `The item is currently **out of stock**.`)
+        .addFields(
+          { name: "🌐 URL", value: `\`${url}\``, inline: false },
+          { name: "🕐 Checked At", value: `<t:${Math.floor(Date.now() / 1000)}:T>`, inline: true }
+        )
+        .setFooter({ text: "WebWatch Bot • Stock Check" })
+        .setTimestamp();
+
+      await checking.edit({ content: "", embeds: [embed] });
+    } catch (err) {
+      await checking.edit(`❌ Failed to check: ${err.message}`);
+    }
   }
 
   // !purge <amount>
@@ -230,12 +282,13 @@ client.on("messageCreate", async (message) => {
       .setColor(0x5865f2)
       .setTitle("🤖 WebWatch Bot — Commands")
       .addFields(
-        { name: "`!watch <url>`", value: "Start monitoring a URL for changes" },
+        { name: "`!watch <url>`", value: "Start monitoring a URL for restock" },
         { name: "`!unwatch <url>`", value: "Stop monitoring a URL" },
-        { name: "`!watchlist`", value: "List all currently monitored URLs" },
+        { name: "`!watchlist`", value: "List all monitored URLs with stock status" },
         { name: "`!clearwatch`", value: "Stop monitoring all URLs" },
+        { name: "`!stock <url>`", value: "Instantly check if an item is in stock" },
         { name: "`!purge <1-100>`", value: "Delete a number of messages in this channel" },
-        { name: "`!restock <website> <purchase_url>`", value: "Manually send a restock alert with a purchase link" },
+        { name: "`!restock <website> <purchase_url>`", value: "Manually send a restock alert" },
         { name: "`!ping`", value: "Check bot latency" },
         { name: "`!help` / `!cmds`", value: "Show this command list" },
       )
@@ -248,7 +301,7 @@ client.on("error", (err) => console.error("Client error:", err));
 
 client.once("ready", () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
-  client.user.setActivity("Made by Don", { type: 3 });
+  client.user.setActivity("for restocks 👟", { type: 3 });
 });
 
 client.login(BOT_TOKEN);
