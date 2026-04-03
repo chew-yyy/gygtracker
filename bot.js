@@ -8,6 +8,7 @@ const BOT_TOKEN = process.env.DISCORD_TOKEN;
 const CHANNEL_ID = process.env.CHANNEL_ID;
 const CHECK_INTERVAL_MS = 1000;
 const IN_STOCK_TEXT = "In Stock - Ready for instant delivery";
+const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 // ─────────────────────────────────────────────────────────────────────────────
 
 const client = new Client({
@@ -18,14 +19,17 @@ const client = new Client({
   ],
 });
 
-// watchList stores: url => { inStock: null|bool, failCount: 0, lastChecked: null }
 const watchList = new Map();
 let monitorInterval = null;
 
 function fetchPage(url) {
   return new Promise((resolve, reject) => {
     const lib = url.startsWith("https") ? https : http;
-    const req = lib.get(url, { headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" } }, timeout: 8000 }, (res) => {
+    const options = {
+      headers: { "User-Agent": USER_AGENT },
+      timeout: 8000,
+    };
+    const req = lib.get(url, options, (res) => {
       if ([301, 302, 307, 308].includes(res.statusCode) && res.headers.location) {
         return fetchPage(res.headers.location).then(resolve).catch(reject);
       }
@@ -50,14 +54,12 @@ async function runChecks() {
       state.lastChecked = new Date();
       state.failCount = 0;
 
-      // First check — just set baseline
       if (state.inStock === null) {
         state.inStock = isInStock;
         console.log(`[BASELINE] ${url} — ${isInStock ? "IN STOCK" : "OUT OF STOCK"}`);
-        return;
+        continue;
       }
 
-      // Was out of stock, now in stock → RESTOCK!
       if (!state.inStock && isInStock) {
         state.inStock = true;
         console.log(`[RESTOCK] ${url}`);
@@ -65,7 +67,7 @@ async function runChecks() {
         const embed = new EmbedBuilder()
           .setColor(0x00ff99)
           .setTitle("🚨 RESTOCK DETECTED!")
-          .setDescription(`@everyone A restock has been detected — act fast before it sells out!`)
+          .setDescription("@everyone A restock has been detected — act fast before it sells out!")
           .addFields(
             { name: "🌐 Restock Detected On", value: `\`${url}\``, inline: false },
             { name: "🛒 Purchase Now", value: `[Click here to buy](${url})`, inline: false },
@@ -78,7 +80,6 @@ async function runChecks() {
         await channel.send({ content: "@everyone", embeds: [embed] });
       }
 
-      // Was in stock, now out of stock → OUT OF STOCK alert
       else if (state.inStock && !isInStock) {
         state.inStock = false;
         console.log(`[OUT OF STOCK] ${url}`);
@@ -86,7 +87,7 @@ async function runChecks() {
         const embed = new EmbedBuilder()
           .setColor(0xff4444)
           .setTitle("❌ Out of Stock")
-          .setDescription(`The item is now out of stock.`)
+          .setDescription("The item is now out of stock.")
           .addFields(
             { name: "🌐 Website", value: `\`${url}\``, inline: false },
             { name: "🕐 Went Out of Stock", value: `<t:${Math.floor(Date.now() / 1000)}:T>`, inline: true }
@@ -134,7 +135,6 @@ client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
   const [cmd, ...args] = message.content.trim().split(/\s+/);
 
-  // !watch <url>
   if (cmd === "!watch") {
     const url = args[0];
     if (!url || !url.startsWith("http")) {
@@ -158,7 +158,6 @@ client.on("messageCreate", async (message) => {
     message.reply({ embeds: [embed] });
   }
 
-  // !unwatch <url>
   else if (cmd === "!unwatch") {
     const url = args[0];
     if (!url || !watchList.has(url)) {
@@ -169,7 +168,6 @@ client.on("messageCreate", async (message) => {
     message.reply(`🛑 Stopped watching \`${url}\``);
   }
 
-  // !watchlist
   else if (cmd === "!watchlist") {
     if (watchList.size === 0) {
       return message.reply("📭 No URLs are currently being watched. Use `!watch <url>` to start.");
@@ -188,14 +186,12 @@ client.on("messageCreate", async (message) => {
     message.reply({ embeds: [embed] });
   }
 
-  // !clearwatch
   else if (cmd === "!clearwatch") {
     watchList.clear();
     stopMonitor();
     message.reply("🧹 Cleared all watched URLs.");
   }
 
-  // !stock <url>
   else if (cmd === "!stock") {
     const url = args[0];
     if (!url || !url.startsWith("http")) {
@@ -212,8 +208,8 @@ client.on("messageCreate", async (message) => {
         .setColor(isInStock ? 0x00ff99 : 0xff4444)
         .setTitle(isInStock ? "✅ In Stock!" : "❌ Out of Stock")
         .setDescription(isInStock
-          ? `The item is currently **in stock** and ready for instant delivery!`
-          : `The item is currently **out of stock**.`)
+          ? "The item is currently **in stock** and ready for instant delivery!"
+          : "The item is currently **out of stock**.")
         .addFields(
           { name: "🌐 URL", value: `\`${url}\``, inline: false },
           { name: "🕐 Checked At", value: `<t:${Math.floor(Date.now() / 1000)}:T>`, inline: true }
@@ -227,7 +223,6 @@ client.on("messageCreate", async (message) => {
     }
   }
 
-  // !purge <amount>
   else if (cmd === "!purge") {
     const amount = parseInt(args[0]);
     if (!amount || amount < 1 || amount > 100) {
@@ -245,7 +240,6 @@ client.on("messageCreate", async (message) => {
     }
   }
 
-  // !restock <website> <purchase_url>
   else if (cmd === "!restock") {
     const website = args[0];
     const purchaseUrl = args[1];
@@ -257,7 +251,7 @@ client.on("messageCreate", async (message) => {
     const embed = new EmbedBuilder()
       .setColor(0x00ff99)
       .setTitle("🚨 RESTOCK DETECTED!")
-      .setDescription(`@everyone A restock has been detected — act fast before it sells out!`)
+      .setDescription("@everyone A restock has been detected — act fast before it sells out!")
       .addFields(
         { name: "🌐 Restock Detected On", value: `\`${website}\``, inline: false },
         { name: "🛒 Purchase Now", value: `[Click here to buy](${purchaseUrl})`, inline: false },
@@ -271,12 +265,10 @@ client.on("messageCreate", async (message) => {
     message.delete().catch(() => {});
   }
 
-  // !ping
   else if (cmd === "!ping") {
     message.reply(`🏓 Pong! Latency: **${client.ws.ping}ms**`);
   }
 
-  // !help / !cmds
   else if (cmd === "!help" || cmd === "!cmds") {
     const embed = new EmbedBuilder()
       .setColor(0x5865f2)
@@ -301,7 +293,7 @@ client.on("error", (err) => console.error("Client error:", err));
 
 client.once("ready", () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
-  client.user.setActivity("1.1", { type: 3 });
+  client.user.setActivity("for restocks 👟", { type: 3 });
 });
 
 client.login(BOT_TOKEN);
