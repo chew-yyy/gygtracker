@@ -7,7 +7,7 @@ const http = require("http");
 const BOT_TOKEN = process.env.DISCORD_TOKEN;
 const CHANNEL_ID = process.env.CHANNEL_ID;
 const CHECK_INTERVAL_MS = 1000;
-const IN_STOCK_TEXT = "In Stock - Ready for instant delivery";
+const IN_STOCK_TEXT = "In Stock";
 // ─────────────────────────────────────────────────────────────────────────────
 
 const client = new Client({
