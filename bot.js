@@ -7,7 +7,7 @@ const http = require("http");
 const BOT_TOKEN = process.env.DISCORD_TOKEN;
 const CHANNEL_ID = process.env.CHANNEL_ID;
 const CHECK_INTERVAL_MS = 1000;
-const IN_STOCK_TEXT = "In Stock";
+const IN_STOCK_TEXT = "In Stock - Ready for instant delivery";
 // ─────────────────────────────────────────────────────────────────────────────
 
 const client = new Client({
@@ -25,7 +25,7 @@ let monitorInterval = null;
 function fetchPage(url) {
   return new Promise((resolve, reject) => {
     const lib = url.startsWith("https") ? https : http;
-    const req = lib.get(url, { headers: { "User-Agent": "Mozilla/5.0 (DiscordBot)" }, timeout: 8000 }, (res) => {
+    const req = lib.get(url, { headers: { { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" } }, timeout: 8000 }, (res) => {
       if ([301, 302, 307, 308].includes(res.statusCode) && res.headers.location) {
         return fetchPage(res.headers.location).then(resolve).catch(reject);
       }
