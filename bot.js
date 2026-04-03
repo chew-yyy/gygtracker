@@ -25,7 +25,7 @@ let monitorInterval = null;
 function fetchPage(url) {
   return new Promise((resolve, reject) => {
     const lib = url.startsWith("https") ? https : http;
-    const req = lib.get(url, { headers: { { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" } }, timeout: 8000 }, (res) => {
+    const req = lib.get(url, { headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" } }, timeout: 8000 }, (res) => {
       if ([301, 302, 307, 308].includes(res.statusCode) && res.headers.location) {
         return fetchPage(res.headers.location).then(resolve).catch(reject);
       }
@@ -301,7 +301,7 @@ client.on("error", (err) => console.error("Client error:", err));
 
 client.once("ready", () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
-  client.user.setActivity("for restocks 👟", { type: 3 });
+  client.user.setActivity("1.1", { type: 3 });
 });
 
 client.login(BOT_TOKEN);
