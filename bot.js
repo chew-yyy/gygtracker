@@ -1,57 +1,175 @@
 require("dotenv").config();
-const { Client, GatewayIntentBits, EmbedBuilder, PermissionsBitField, AuditLogEvent } = require("discord.js");
+const {
+  Client, GatewayIntentBits, EmbedBuilder, PermissionsBitField,
+  REST, Routes, SlashCommandBuilder, InteractionType
+} = require("discord.js");
 
 // ─── CONFIG ──────────────────────────────────────────────────────────────────
 const BOT_TOKEN = process.env.DISCORD_TOKEN;
-const LOG_CHANNEL_ID = process.env.LOG_CHANNEL_ID || null; // Optional: set in .env for mod logs
+const CLIENT_ID = process.env.CLIENT_ID;       // Your bot's Application ID
+const LOG_CHANNEL_ID = process.env.LOG_CHANNEL_ID || null;
 // ─────────────────────────────────────────────────────────────────────────────
 
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-    GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.GuildModeration,
-    GatewayIntentBits.GuildPresences,
-  ],
-});
+// ─── SLASH COMMAND DEFINITIONS ───────────────────────────────────────────────
+const commands = [
+  new SlashCommandBuilder()
+    .setName("kick")
+    .setDescription("Kick a member from the server")
+    .addUserOption(o => o.setName("user").setDescription("The user to kick").setRequired(true))
+    .addStringOption(o => o.setName("reason").setDescription("Reason for kick")),
+
+  new SlashCommandBuilder()
+    .setName("ban")
+    .setDescription("Ban a member from the server")
+    .addUserOption(o => o.setName("user").setDescription("The user to ban").setRequired(true))
+    .addStringOption(o => o.setName("reason").setDescription("Reason for ban")),
+
+  new SlashCommandBuilder()
+    .setName("unban")
+    .setDescription("Unban a user by their ID")
+    .addStringOption(o => o.setName("userid").setDescription("The user's ID").setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName("timeout")
+    .setDescription("Timeout a member")
+    .addUserOption(o => o.setName("user").setDescription("The user to timeout").setRequired(true))
+    .addStringOption(o => o.setName("duration").setDescription("Duration e.g. 10s, 5m, 2h, 1d").setRequired(true))
+    .addStringOption(o => o.setName("reason").setDescription("Reason for timeout")),
+
+  new SlashCommandBuilder()
+    .setName("untimeout")
+    .setDescription("Remove a timeout from a member")
+    .addUserOption(o => o.setName("user").setDescription("The user to untimeout").setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName("mute")
+    .setDescription("Mute a member (adds Muted role)")
+    .addUserOption(o => o.setName("user").setDescription("The user to mute").setRequired(true))
+    .addStringOption(o => o.setName("reason").setDescription("Reason for mute")),
+
+  new SlashCommandBuilder()
+    .setName("unmute")
+    .setDescription("Unmute a member")
+    .addUserOption(o => o.setName("user").setDescription("The user to unmute").setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName("warn")
+    .setDescription("Warn a member")
+    .addUserOption(o => o.setName("user").setDescription("The user to warn").setRequired(true))
+    .addStringOption(o => o.setName("reason").setDescription("Reason for warning").setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName("purge")
+    .setDescription("Delete a number of messages in this channel")
+    .addIntegerOption(o => o.setName("amount").setDescription("Number of messages to delete (1-100)").setRequired(true).setMinValue(1).setMaxValue(100)),
+
+  new SlashCommandBuilder()
+    .setName("slowmode")
+    .setDescription("Set slowmode for this channel")
+    .addIntegerOption(o => o.setName("seconds").setDescription("Slowmode in seconds (0 to disable)").setRequired(true).setMinValue(0).setMaxValue(21600)),
+
+  new SlashCommandBuilder()
+    .setName("lock")
+    .setDescription("Lock the current channel"),
+
+  new SlashCommandBuilder()
+    .setName("unlock")
+    .setDescription("Unlock the current channel"),
+
+  new SlashCommandBuilder()
+    .setName("nick")
+    .setDescription("Set or reset a member's nickname")
+    .addUserOption(o => o.setName("user").setDescription("The user").setRequired(true))
+    .addStringOption(o => o.setName("nickname").setDescription("New nickname (leave blank to reset)")),
+
+  new SlashCommandBuilder()
+    .setName("role")
+    .setDescription("Add or remove a role from a member")
+    .addStringOption(o => o.setName("action").setDescription("add or remove").setRequired(true).addChoices({ name: "add", value: "add" }, { name: "remove", value: "remove" }))
+    .addUserOption(o => o.setName("user").setDescription("The user").setRequired(true))
+    .addRoleOption(o => o.setName("role").setDescription("The role").setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName("userinfo")
+    .setDescription("View info about a user")
+    .addUserOption(o => o.setName("user").setDescription("The user (defaults to you)")),
+
+  new SlashCommandBuilder()
+    .setName("serverinfo")
+    .setDescription("View info about this server"),
+
+  new SlashCommandBuilder()
+    .setName("avatar")
+    .setDescription("View a user's avatar")
+    .addUserOption(o => o.setName("user").setDescription("The user (defaults to you)")),
+
+  new SlashCommandBuilder()
+    .setName("announce")
+    .setDescription("Send an announcement to a channel")
+    .addChannelOption(o => o.setName("channel").setDescription("The channel to announce in").setRequired(true))
+    .addStringOption(o => o.setName("message").setDescription("The announcement message").setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName("dm")
+    .setDescription("Send a DM to a specific user (Admin only)")
+    .addUserOption(o => o.setName("user").setDescription("The user to DM").setRequired(true))
+    .addStringOption(o => o.setName("message").setDescription("The message to send").setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName("dmall")
+    .setDescription("DM all server members (Admin only)")
+    .addStringOption(o => o.setName("message").setDescription("The message to send").setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName("poll")
+    .setDescription("Create a poll")
+    .addStringOption(o => o.setName("question").setDescription("The poll question").setRequired(true))
+    .addStringOption(o => o.setName("options").setDescription("Options separated by | e.g. Yes | No | Maybe")),
+
+  new SlashCommandBuilder()
+    .setName("say")
+    .setDescription("Make the bot say something")
+    .addStringOption(o => o.setName("message").setDescription("What to say").setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName("embed")
+    .setDescription("Send a custom embed")
+    .addStringOption(o => o.setName("title").setDescription("Embed title").setRequired(true))
+    .addStringOption(o => o.setName("description").setDescription("Embed description").setRequired(true))
+    .addStringOption(o => o.setName("color").setDescription("Hex color e.g. #ff0000")),
+
+  new SlashCommandBuilder()
+    .setName("banlist")
+    .setDescription("View all banned users"),
+
+  new SlashCommandBuilder()
+    .setName("roles")
+    .setDescription("List all server roles"),
+
+  new SlashCommandBuilder()
+    .setName("ping")
+    .setDescription("Check bot latency"),
+].map(cmd => cmd.toJSON());
+
+// ─── REGISTER COMMANDS ───────────────────────────────────────────────────────
+async function registerCommands() {
+  const rest = new REST({ version: "10" }).setToken(BOT_TOKEN);
+  try {
+    console.log("Registering slash commands...");
+    await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
+    console.log("✅ Slash commands registered!");
+  } catch (err) {
+    console.error("Failed to register commands:", err);
+  }
+}
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
-
-function isAdmin(member) {
-  return member.permissions.has(PermissionsBitField.Flags.Administrator);
-}
-
-function isMod(member) {
-  return member.permissions.has(PermissionsBitField.Flags.ManageMessages) || isAdmin(member);
-}
-
-function hasPermission(member, flag) {
-  return member.permissions.has(flag) || isAdmin(member);
-}
-
-async function logAction(guild, embed) {
-  if (!LOG_CHANNEL_ID) return;
-  const logChannel = guild.channels.cache.get(LOG_CHANNEL_ID);
-  if (logChannel) await logChannel.send({ embeds: [embed] }).catch(() => {});
-}
-
-function modEmbed(title, description, color = 0x5865f2) {
-  return new EmbedBuilder()
-    .setColor(color)
-    .setTitle(title)
-    .setDescription(description)
-    .setTimestamp();
-}
-
 function parseDuration(str) {
   const match = str.match(/^(\d+)(s|m|h|d)$/);
   if (!match) return null;
   const value = parseInt(match[1]);
-  const unit = match[2];
   const multipliers = { s: 1000, m: 60000, h: 3600000, d: 86400000 };
-  return value * multipliers[unit];
+  return value * multipliers[match[2]];
 }
 
 function formatDuration(ms) {
@@ -64,281 +182,276 @@ function formatDuration(ms) {
   return `${Math.floor(h / 24)}d`;
 }
 
-// ─── COMMANDS ─────────────────────────────────────────────────────────────────
+function modEmbed(title, description, color = 0x5865f2) {
+  return new EmbedBuilder().setColor(color).setTitle(title).setDescription(description).setTimestamp();
+}
 
-client.on("messageCreate", async (message) => {
-  if (message.author.bot || !message.guild) return;
-  const args = message.content.trim().split(/\s+/);
-  const cmd = args[0].toLowerCase();
+async function logAction(guild, embed) {
+  if (!LOG_CHANNEL_ID) return;
+  const ch = guild.channels.cache.get(LOG_CHANNEL_ID);
+  if (ch) await ch.send({ embeds: [embed] }).catch(() => {});
+}
 
-  // ── !kick <@user> [reason] ────────────────────────────────────────────────
-  if (cmd === "!kick") {
-    if (!hasPermission(message.member, PermissionsBitField.Flags.KickMembers))
-      return message.reply("❌ You need the **Kick Members** permission.");
+// ─── CLIENT ──────────────────────────────────────────────────────────────────
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildModeration,
+    GatewayIntentBits.GuildPresences,
+  ],
+});
 
-    const target = message.mentions.members.first();
-    if (!target) return message.reply("❌ Usage: `!kick @user [reason]`");
-    if (!target.kickable) return message.reply("❌ I cannot kick that user.");
+client.once("ready", async () => {
+  console.log(`✅ Logged in as ${client.user.tag}`);
+  client.user.setActivity("the server 🛡️", { type: 3 });
+  await registerCommands();
+});
 
-    const reason = args.slice(2).join(" ") || "No reason provided";
+// ─── INTERACTION HANDLER ─────────────────────────────────────────────────────
+client.on("interactionCreate", async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+
+  const { commandName, member, guild } = interaction;
+  await interaction.deferReply({ ephemeral: false }).catch(() => {});
+
+  // ── /kick ──────────────────────────────────────────────────────────────────
+  if (commandName === "kick") {
+    if (!member.permissions.has(PermissionsBitField.Flags.KickMembers))
+      return interaction.editReply("❌ You need the **Kick Members** permission.");
+
+    const target = interaction.options.getMember("user");
+    const reason = interaction.options.getString("reason") || "No reason provided";
+
+    if (!target) return interaction.editReply("❌ User not found.");
+    if (!target.kickable) return interaction.editReply("❌ I cannot kick that user.");
+
     await target.kick(reason);
-
     const embed = modEmbed("👢 Member Kicked", `**${target.user.tag}** has been kicked.\n**Reason:** ${reason}`, 0xff6600);
-    embed.addFields({ name: "Moderator", value: message.author.tag });
-    message.reply({ embeds: [embed] });
-    await logAction(message.guild, embed);
+    embed.addFields({ name: "Moderator", value: member.user.tag });
+    interaction.editReply({ embeds: [embed] });
+    await logAction(guild, embed);
   }
 
-  // ── !ban <@user> [reason] ─────────────────────────────────────────────────
-  else if (cmd === "!ban") {
-    if (!hasPermission(message.member, PermissionsBitField.Flags.BanMembers))
-      return message.reply("❌ You need the **Ban Members** permission.");
+  // ── /ban ───────────────────────────────────────────────────────────────────
+  else if (commandName === "ban") {
+    if (!member.permissions.has(PermissionsBitField.Flags.BanMembers))
+      return interaction.editReply("❌ You need the **Ban Members** permission.");
 
-    const target = message.mentions.members.first();
-    if (!target) return message.reply("❌ Usage: `!ban @user [reason]`");
-    if (!target.bannable) return message.reply("❌ I cannot ban that user.");
+    const target = interaction.options.getMember("user");
+    const reason = interaction.options.getString("reason") || "No reason provided";
 
-    const reason = args.slice(2).join(" ") || "No reason provided";
+    if (!target) return interaction.editReply("❌ User not found.");
+    if (!target.bannable) return interaction.editReply("❌ I cannot ban that user.");
+
     await target.ban({ reason });
-
     const embed = modEmbed("🔨 Member Banned", `**${target.user.tag}** has been banned.\n**Reason:** ${reason}`, 0xff0000);
-    embed.addFields({ name: "Moderator", value: message.author.tag });
-    message.reply({ embeds: [embed] });
-    await logAction(message.guild, embed);
+    embed.addFields({ name: "Moderator", value: member.user.tag });
+    interaction.editReply({ embeds: [embed] });
+    await logAction(guild, embed);
   }
 
-  // ── !unban <userId> ───────────────────────────────────────────────────────
-  else if (cmd === "!unban") {
-    if (!hasPermission(message.member, PermissionsBitField.Flags.BanMembers))
-      return message.reply("❌ You need the **Ban Members** permission.");
+  // ── /unban ─────────────────────────────────────────────────────────────────
+  else if (commandName === "unban") {
+    if (!member.permissions.has(PermissionsBitField.Flags.BanMembers))
+      return interaction.editReply("❌ You need the **Ban Members** permission.");
 
-    const userId = args[1];
-    if (!userId) return message.reply("❌ Usage: `!unban <userId>`");
-
+    const userId = interaction.options.getString("userid");
     try {
-      await message.guild.members.unban(userId);
+      await guild.members.unban(userId);
       const embed = modEmbed("✅ Member Unbanned", `User \`${userId}\` has been unbanned.`, 0x00cc66);
-      embed.addFields({ name: "Moderator", value: message.author.tag });
-      message.reply({ embeds: [embed] });
-      await logAction(message.guild, embed);
+      embed.addFields({ name: "Moderator", value: member.user.tag });
+      interaction.editReply({ embeds: [embed] });
+      await logAction(guild, embed);
     } catch {
-      message.reply("❌ Could not unban that user. Make sure the ID is correct.");
+      interaction.editReply("❌ Could not unban. Make sure the ID is correct.");
     }
   }
 
-  // ── !timeout <@user> <duration> [reason] ─────────────────────────────────
-  // Duration format: 10s, 5m, 2h, 1d
-  else if (cmd === "!timeout") {
-    if (!hasPermission(message.member, PermissionsBitField.Flags.ModerateMembers))
-      return message.reply("❌ You need the **Timeout Members** permission.");
+  // ── /timeout ───────────────────────────────────────────────────────────────
+  else if (commandName === "timeout") {
+    if (!member.permissions.has(PermissionsBitField.Flags.ModerateMembers))
+      return interaction.editReply("❌ You need the **Timeout Members** permission.");
 
-    const target = message.mentions.members.first();
-    const durationStr = args[2];
-    if (!target || !durationStr) return message.reply("❌ Usage: `!timeout @user <duration> [reason]`\nDuration examples: `10s`, `5m`, `2h`, `1d`");
-
+    const target = interaction.options.getMember("user");
+    const durationStr = interaction.options.getString("duration");
+    const reason = interaction.options.getString("reason") || "No reason provided";
     const durationMs = parseDuration(durationStr);
-    if (!durationMs) return message.reply("❌ Invalid duration. Use format like `10s`, `5m`, `2h`, `1d`");
-    if (durationMs > 28 * 24 * 60 * 60 * 1000) return message.reply("❌ Timeout cannot exceed 28 days.");
 
-    const reason = args.slice(3).join(" ") || "No reason provided";
+    if (!target) return interaction.editReply("❌ User not found.");
+    if (!durationMs) return interaction.editReply("❌ Invalid duration. Use: `10s`, `5m`, `2h`, `1d`");
+    if (durationMs > 28 * 24 * 60 * 60 * 1000) return interaction.editReply("❌ Max timeout is 28 days.");
+
     await target.timeout(durationMs, reason);
-
-    const embed = modEmbed("⏱️ Member Timed Out", `**${target.user.tag}** has been timed out for **${formatDuration(durationMs)}**.\n**Reason:** ${reason}`, 0xffaa00);
-    embed.addFields({ name: "Moderator", value: message.author.tag });
-    message.reply({ embeds: [embed] });
-    await logAction(message.guild, embed);
+    const embed = modEmbed("⏱️ Member Timed Out", `**${target.user.tag}** timed out for **${formatDuration(durationMs)}**.\n**Reason:** ${reason}`, 0xffaa00);
+    embed.addFields({ name: "Moderator", value: member.user.tag });
+    interaction.editReply({ embeds: [embed] });
+    await logAction(guild, embed);
   }
 
-  // ── !untimeout <@user> ────────────────────────────────────────────────────
-  else if (cmd === "!untimeout") {
-    if (!hasPermission(message.member, PermissionsBitField.Flags.ModerateMembers))
-      return message.reply("❌ You need the **Timeout Members** permission.");
+  // ── /untimeout ─────────────────────────────────────────────────────────────
+  else if (commandName === "untimeout") {
+    if (!member.permissions.has(PermissionsBitField.Flags.ModerateMembers))
+      return interaction.editReply("❌ You need the **Timeout Members** permission.");
 
-    const target = message.mentions.members.first();
-    if (!target) return message.reply("❌ Usage: `!untimeout @user`");
+    const target = interaction.options.getMember("user");
+    if (!target) return interaction.editReply("❌ User not found.");
 
     await target.timeout(null);
     const embed = modEmbed("✅ Timeout Removed", `**${target.user.tag}**'s timeout has been removed.`, 0x00cc66);
-    embed.addFields({ name: "Moderator", value: message.author.tag });
-    message.reply({ embeds: [embed] });
-    await logAction(message.guild, embed);
+    embed.addFields({ name: "Moderator", value: member.user.tag });
+    interaction.editReply({ embeds: [embed] });
+    await logAction(guild, embed);
   }
 
-  // ── !mute <@user> [reason] ────────────────────────────────────────────────
-  // Creates a "Muted" role if it doesn't exist and applies it
-  else if (cmd === "!mute") {
-    if (!isMod(message.member))
-      return message.reply("❌ You need the **Manage Messages** permission.");
+  // ── /mute ──────────────────────────────────────────────────────────────────
+  else if (commandName === "mute") {
+    if (!member.permissions.has(PermissionsBitField.Flags.ManageMessages))
+      return interaction.editReply("❌ You need the **Manage Messages** permission.");
 
-    const target = message.mentions.members.first();
-    if (!target) return message.reply("❌ Usage: `!mute @user [reason]`");
+    const target = interaction.options.getMember("user");
+    const reason = interaction.options.getString("reason") || "No reason provided";
+    if (!target) return interaction.editReply("❌ User not found.");
 
-    let muteRole = message.guild.roles.cache.find(r => r.name === "Muted");
+    let muteRole = guild.roles.cache.find(r => r.name === "Muted");
     if (!muteRole) {
-      muteRole = await message.guild.roles.create({
-        name: "Muted",
-        color: 0x808080,
-        permissions: [],
-      });
-      message.guild.channels.cache.forEach(async (channel) => {
-        await channel.permissionOverwrites.create(muteRole, {
-          SendMessages: false,
-          AddReactions: false,
-          Speak: false,
-        }).catch(() => {});
+      muteRole = await guild.roles.create({ name: "Muted", color: 0x808080, permissions: [] });
+      guild.channels.cache.forEach(async (ch) => {
+        await ch.permissionOverwrites.create(muteRole, { SendMessages: false, AddReactions: false, Speak: false }).catch(() => {});
       });
     }
 
-    if (target.roles.cache.has(muteRole.id)) return message.reply("⚠️ That user is already muted.");
-    const reason = args.slice(2).join(" ") || "No reason provided";
+    if (target.roles.cache.has(muteRole.id)) return interaction.editReply("⚠️ That user is already muted.");
     await target.roles.add(muteRole, reason);
 
     const embed = modEmbed("🔇 Member Muted", `**${target.user.tag}** has been muted.\n**Reason:** ${reason}`, 0x808080);
-    embed.addFields({ name: "Moderator", value: message.author.tag });
-    message.reply({ embeds: [embed] });
-    await logAction(message.guild, embed);
+    embed.addFields({ name: "Moderator", value: member.user.tag });
+    interaction.editReply({ embeds: [embed] });
+    await logAction(guild, embed);
   }
 
-  // ── !unmute <@user> ───────────────────────────────────────────────────────
-  else if (cmd === "!unmute") {
-    if (!isMod(message.member))
-      return message.reply("❌ You need the **Manage Messages** permission.");
+  // ── /unmute ────────────────────────────────────────────────────────────────
+  else if (commandName === "unmute") {
+    if (!member.permissions.has(PermissionsBitField.Flags.ManageMessages))
+      return interaction.editReply("❌ You need the **Manage Messages** permission.");
 
-    const target = message.mentions.members.first();
-    if (!target) return message.reply("❌ Usage: `!unmute @user`");
+    const target = interaction.options.getMember("user");
+    if (!target) return interaction.editReply("❌ User not found.");
 
-    const muteRole = message.guild.roles.cache.find(r => r.name === "Muted");
+    const muteRole = guild.roles.cache.find(r => r.name === "Muted");
     if (!muteRole || !target.roles.cache.has(muteRole.id))
-      return message.reply("⚠️ That user is not muted.");
+      return interaction.editReply("⚠️ That user is not muted.");
 
     await target.roles.remove(muteRole);
     const embed = modEmbed("🔊 Member Unmuted", `**${target.user.tag}** has been unmuted.`, 0x00cc66);
-    embed.addFields({ name: "Moderator", value: message.author.tag });
-    message.reply({ embeds: [embed] });
-    await logAction(message.guild, embed);
+    embed.addFields({ name: "Moderator", value: member.user.tag });
+    interaction.editReply({ embeds: [embed] });
+    await logAction(guild, embed);
   }
 
-  // ── !warn <@user> <reason> ────────────────────────────────────────────────
-  else if (cmd === "!warn") {
-    if (!isMod(message.member))
-      return message.reply("❌ You need the **Manage Messages** permission.");
+  // ── /warn ──────────────────────────────────────────────────────────────────
+  else if (commandName === "warn") {
+    if (!member.permissions.has(PermissionsBitField.Flags.ManageMessages))
+      return interaction.editReply("❌ You need the **Manage Messages** permission.");
 
-    const target = message.mentions.members.first();
-    const reason = args.slice(2).join(" ");
-    if (!target || !reason) return message.reply("❌ Usage: `!warn @user <reason>`");
+    const target = interaction.options.getMember("user");
+    const reason = interaction.options.getString("reason");
+    if (!target) return interaction.editReply("❌ User not found.");
 
     const embed = modEmbed("⚠️ Member Warned", `**${target.user.tag}** has been warned.\n**Reason:** ${reason}`, 0xffcc00);
-    embed.addFields({ name: "Moderator", value: message.author.tag });
+    embed.addFields({ name: "Moderator", value: member.user.tag });
 
     try {
-      await target.send({ embeds: [modEmbed("⚠️ You have been warned", `You were warned in **${message.guild.name}**.\n**Reason:** ${reason}`, 0xffcc00)] });
+      await target.send({ embeds: [modEmbed("⚠️ You have been warned", `You were warned in **${guild.name}**.\n**Reason:** ${reason}`, 0xffcc00)] });
     } catch {}
 
-    message.reply({ embeds: [embed] });
-    await logAction(message.guild, embed);
+    interaction.editReply({ embeds: [embed] });
+    await logAction(guild, embed);
   }
 
-  // ── !purge <amount> ───────────────────────────────────────────────────────
-  else if (cmd === "!purge") {
-    if (!hasPermission(message.member, PermissionsBitField.Flags.ManageMessages))
-      return message.reply("❌ You need the **Manage Messages** permission.");
+  // ── /purge ─────────────────────────────────────────────────────────────────
+  else if (commandName === "purge") {
+    if (!member.permissions.has(PermissionsBitField.Flags.ManageMessages))
+      return interaction.editReply("❌ You need the **Manage Messages** permission.");
 
-    const amount = parseInt(args[1]);
-    if (!amount || amount < 1 || amount > 100)
-      return message.reply("❌ Usage: `!purge <1-100>`");
-
+    const amount = interaction.options.getInteger("amount");
     try {
-      await message.channel.bulkDelete(amount + 1, true);
-      const confirm = await message.channel.send(`🗑️ Deleted **${amount}** messages.`);
+      await interaction.channel.bulkDelete(amount, true);
+      const confirm = await interaction.editReply(`🗑️ Deleted **${amount}** messages.`);
       setTimeout(() => confirm.delete().catch(() => {}), 3000);
     } catch {
-      message.reply("❌ Could not delete messages. They may be older than 14 days.");
+      interaction.editReply("❌ Could not delete messages. They may be older than 14 days.");
     }
   }
 
-  // ── !slowmode <seconds> ───────────────────────────────────────────────────
-  else if (cmd === "!slowmode") {
-    if (!hasPermission(message.member, PermissionsBitField.Flags.ManageChannels))
-      return message.reply("❌ You need the **Manage Channels** permission.");
+  // ── /slowmode ──────────────────────────────────────────────────────────────
+  else if (commandName === "slowmode") {
+    if (!member.permissions.has(PermissionsBitField.Flags.ManageChannels))
+      return interaction.editReply("❌ You need the **Manage Channels** permission.");
 
-    const seconds = parseInt(args[1]);
-    if (isNaN(seconds) || seconds < 0 || seconds > 21600)
-      return message.reply("❌ Usage: `!slowmode <0-21600>` (seconds). Use 0 to disable.");
-
-    await message.channel.setRateLimitPerUser(seconds);
-    if (seconds === 0) {
-      message.reply("✅ Slowmode disabled.");
-    } else {
-      message.reply(`✅ Slowmode set to **${seconds} seconds**.`);
-    }
+    const seconds = interaction.options.getInteger("seconds");
+    await interaction.channel.setRateLimitPerUser(seconds);
+    interaction.editReply(seconds === 0 ? "✅ Slowmode disabled." : `✅ Slowmode set to **${seconds} seconds**.`);
   }
 
-  // ── !lock ─────────────────────────────────────────────────────────────────
-  else if (cmd === "!lock") {
-    if (!hasPermission(message.member, PermissionsBitField.Flags.ManageChannels))
-      return message.reply("❌ You need the **Manage Channels** permission.");
+  // ── /lock ──────────────────────────────────────────────────────────────────
+  else if (commandName === "lock") {
+    if (!member.permissions.has(PermissionsBitField.Flags.ManageChannels))
+      return interaction.editReply("❌ You need the **Manage Channels** permission.");
 
-    await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: false });
-    message.reply("🔒 Channel locked. Members can no longer send messages.");
+    await interaction.channel.permissionOverwrites.edit(guild.roles.everyone, { SendMessages: false });
+    interaction.editReply("🔒 Channel locked.");
   }
 
-  // ── !unlock ───────────────────────────────────────────────────────────────
-  else if (cmd === "!unlock") {
-    if (!hasPermission(message.member, PermissionsBitField.Flags.ManageChannels))
-      return message.reply("❌ You need the **Manage Channels** permission.");
+  // ── /unlock ────────────────────────────────────────────────────────────────
+  else if (commandName === "unlock") {
+    if (!member.permissions.has(PermissionsBitField.Flags.ManageChannels))
+      return interaction.editReply("❌ You need the **Manage Channels** permission.");
 
-    await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: null });
-    message.reply("🔓 Channel unlocked. Members can send messages again.");
+    await interaction.channel.permissionOverwrites.edit(guild.roles.everyone, { SendMessages: null });
+    interaction.editReply("🔓 Channel unlocked.");
   }
 
-  // ── !nick <@user> <nickname> ──────────────────────────────────────────────
-  else if (cmd === "!nick") {
-    if (!hasPermission(message.member, PermissionsBitField.Flags.ManageNicknames))
-      return message.reply("❌ You need the **Manage Nicknames** permission.");
+  // ── /nick ──────────────────────────────────────────────────────────────────
+  else if (commandName === "nick") {
+    if (!member.permissions.has(PermissionsBitField.Flags.ManageNicknames))
+      return interaction.editReply("❌ You need the **Manage Nicknames** permission.");
 
-    const target = message.mentions.members.first();
-    const nick = args.slice(2).join(" ");
-    if (!target) return message.reply("❌ Usage: `!nick @user <nickname>` or `!nick @user reset`");
+    const target = interaction.options.getMember("user");
+    const nick = interaction.options.getString("nickname");
+    if (!target) return interaction.editReply("❌ User not found.");
 
-    if (nick === "reset") {
-      await target.setNickname(null);
-      message.reply(`✅ Reset **${target.user.tag}**'s nickname.`);
-    } else if (!nick) {
-      return message.reply("❌ Please provide a nickname or use `reset`.");
-    } else {
-      await target.setNickname(nick);
-      message.reply(`✅ Set **${target.user.tag}**'s nickname to **${nick}**.`);
-    }
+    await target.setNickname(nick || null);
+    interaction.editReply(nick ? `✅ Set nickname to **${nick}**.` : `✅ Reset **${target.user.tag}**'s nickname.`);
   }
 
-  // ── !role add/remove <@user> <@role> ─────────────────────────────────────
-  else if (cmd === "!role") {
-    if (!hasPermission(message.member, PermissionsBitField.Flags.ManageRoles))
-      return message.reply("❌ You need the **Manage Roles** permission.");
+  // ── /role ──────────────────────────────────────────────────────────────────
+  else if (commandName === "role") {
+    if (!member.permissions.has(PermissionsBitField.Flags.ManageRoles))
+      return interaction.editReply("❌ You need the **Manage Roles** permission.");
 
-    const action = args[1];
-    const target = message.mentions.members.first();
-    const role = message.mentions.roles.first();
+    const action = interaction.options.getString("action");
+    const target = interaction.options.getMember("user");
+    const role = interaction.options.getRole("role");
 
-    if (!action || !target || !role)
-      return message.reply("❌ Usage: `!role add @user @role` or `!role remove @user @role`");
+    if (!target) return interaction.editReply("❌ User not found.");
 
     if (action === "add") {
       await target.roles.add(role);
-      message.reply(`✅ Added **${role.name}** to **${target.user.tag}**.`);
-    } else if (action === "remove") {
-      await target.roles.remove(role);
-      message.reply(`✅ Removed **${role.name}** from **${target.user.tag}**.`);
+      interaction.editReply(`✅ Added **${role.name}** to **${target.user.tag}**.`);
     } else {
-      message.reply("❌ Use `add` or `remove`.");
+      await target.roles.remove(role);
+      interaction.editReply(`✅ Removed **${role.name}** from **${target.user.tag}**.`);
     }
   }
 
-  // ── !userinfo <@user> ─────────────────────────────────────────────────────
-  else if (cmd === "!userinfo") {
-    const target = message.mentions.members.first() || message.member;
+  // ── /userinfo ──────────────────────────────────────────────────────────────
+  else if (commandName === "userinfo") {
+    const target = interaction.options.getMember("user") || member;
     const user = target.user;
-    const roles = target.roles.cache.filter(r => r.id !== message.guild.id).map(r => r.toString()).join(", ") || "None";
+    const roles = target.roles.cache.filter(r => r.id !== guild.id).map(r => r.toString()).join(", ") || "None";
 
     const embed = new EmbedBuilder()
       .setColor(0x5865f2)
@@ -353,12 +466,11 @@ client.on("messageCreate", async (message) => {
         { name: `Roles (${target.roles.cache.size - 1})`, value: roles.length > 1024 ? "Too many to display" : roles }
       )
       .setTimestamp();
-    message.reply({ embeds: [embed] });
+    interaction.editReply({ embeds: [embed] });
   }
 
-  // ── !serverinfo ───────────────────────────────────────────────────────────
-  else if (cmd === "!serverinfo") {
-    const guild = message.guild;
+  // ── /serverinfo ────────────────────────────────────────────────────────────
+  else if (commandName === "serverinfo") {
     await guild.members.fetch();
     const bots = guild.members.cache.filter(m => m.user.bot).size;
     const humans = guild.members.cache.size - bots;
@@ -374,126 +486,111 @@ client.on("messageCreate", async (message) => {
         { name: "Channels", value: String(guild.channels.cache.size), inline: true },
         { name: "Roles", value: String(guild.roles.cache.size), inline: true },
         { name: "Boosts", value: String(guild.premiumSubscriptionCount || 0), inline: true },
-        { name: "Verification Level", value: String(guild.verificationLevel), inline: true },
       )
       .setTimestamp();
-    message.reply({ embeds: [embed] });
+    interaction.editReply({ embeds: [embed] });
   }
 
-  // ── !avatar <@user> ───────────────────────────────────────────────────────
-  else if (cmd === "!avatar") {
-    const target = message.mentions.users.first() || message.author;
+  // ── /avatar ────────────────────────────────────────────────────────────────
+  else if (commandName === "avatar") {
+    const target = interaction.options.getUser("user") || interaction.user;
     const embed = new EmbedBuilder()
       .setColor(0x5865f2)
       .setTitle(`🖼️ Avatar — ${target.tag}`)
       .setImage(target.displayAvatarURL({ size: 512 }));
-    message.reply({ embeds: [embed] });
+    interaction.editReply({ embeds: [embed] });
   }
 
-  // ── !announce <#channel> <message> ───────────────────────────────────────
-  else if (cmd === "!announce") {
-    if (!isAdmin(message.member))
-      return message.reply("❌ You need the **Administrator** permission.");
+  // ── /announce ──────────────────────────────────────────────────────────────
+  else if (commandName === "announce") {
+    if (!member.permissions.has(PermissionsBitField.Flags.Administrator))
+      return interaction.editReply("❌ You need the **Administrator** permission.");
 
-    const channel = message.mentions.channels.first();
-    const announcement = args.slice(2).join(" ");
-    if (!channel || !announcement)
-      return message.reply("❌ Usage: `!announce #channel <message>`");
+    const channel = interaction.options.getChannel("channel");
+    const msg = interaction.options.getString("message");
 
     const embed = new EmbedBuilder()
       .setColor(0x00cc66)
       .setTitle("📢 Announcement")
-      .setDescription(announcement)
-      .setFooter({ text: `From ${message.author.tag}` })
+      .setDescription(msg)
+      .setFooter({ text: `From ${member.user.tag}` })
       .setTimestamp();
 
     await channel.send({ embeds: [embed] });
-    message.reply(`✅ Announcement sent to ${channel}.`);
+    interaction.editReply(`✅ Announcement sent to ${channel}.`);
   }
 
-  // ── !dm <@user> <message> ─────────────────────────────────────────────────
-  else if (cmd === "!dm") {
-    if (!isAdmin(message.member))
-      return message.reply("❌ You need the **Administrator** permission.");
+  // ── /dm ────────────────────────────────────────────────────────────────────
+  else if (commandName === "dm") {
+    if (!member.permissions.has(PermissionsBitField.Flags.Administrator))
+      return interaction.editReply("❌ You need the **Administrator** permission.");
 
-    const target = message.mentions.users.first();
-    const dmMessage = args.slice(2).join(" ");
-    if (!target || !dmMessage)
-      return message.reply("❌ Usage: `!dm @user <message>`");
+    const target = interaction.options.getUser("user");
+    const msg = interaction.options.getString("message");
 
     try {
       const embed = new EmbedBuilder()
         .setColor(0x5865f2)
-        .setTitle(`📨 Message from ${message.guild.name}`)
-        .setDescription(dmMessage)
-        .setFooter({ text: `Sent by ${message.author.tag}` })
+        .setTitle(`📨 Message from ${guild.name}`)
+        .setDescription(msg)
+        .setFooter({ text: `Sent by ${member.user.tag}` })
         .setTimestamp();
-
       await target.send({ embeds: [embed] });
-      message.reply(`✅ DM sent to **${target.tag}**.`);
+      interaction.editReply(`✅ DM sent to **${target.tag}**.`);
     } catch {
-      message.reply("❌ Could not DM that user. They may have DMs disabled.");
+      interaction.editReply("❌ Could not DM that user. They may have DMs disabled.");
     }
   }
 
-  // ── !dmall <message> ──────────────────────────────────────────────────────
-  else if (cmd === "!dmall") {
-    if (!isAdmin(message.member))
-      return message.reply("❌ You need the **Administrator** permission.");
+  // ── /dmall ─────────────────────────────────────────────────────────────────
+  else if (commandName === "dmall") {
+    if (!member.permissions.has(PermissionsBitField.Flags.Administrator))
+      return interaction.editReply("❌ You need the **Administrator** permission.");
 
-    const dmMessage = args.slice(1).join(" ");
-    if (!dmMessage) return message.reply("❌ Usage: `!dmall <message>`");
-
-    const statusMsg = await message.reply("📨 Sending DMs to all members...");
-    await message.guild.members.fetch();
-    const members = message.guild.members.cache.filter(m => !m.user.bot);
+    const msg = interaction.options.getString("message");
+    await interaction.editReply("📨 Sending DMs to all members...");
+    await guild.members.fetch();
+    const members = guild.members.cache.filter(m => !m.user.bot);
 
     let sent = 0, failed = 0;
-    for (const [, member] of members) {
+    for (const [, m] of members) {
       try {
         const embed = new EmbedBuilder()
           .setColor(0x5865f2)
-          .setTitle(`📢 Message from ${message.guild.name}`)
-          .setDescription(dmMessage)
-          .setFooter({ text: `Sent by ${message.author.tag}` })
+          .setTitle(`📢 Message from ${guild.name}`)
+          .setDescription(msg)
+          .setFooter({ text: `Sent by ${member.user.tag}` })
           .setTimestamp();
-        await member.send({ embeds: [embed] });
+        await m.send({ embeds: [embed] });
         sent++;
       } catch { failed++; }
     }
-    await statusMsg.edit(`✅ Done! **${sent}** delivered, **${failed}** failed.`);
-    message.delete().catch(() => {});
+    interaction.editReply(`✅ Done! **${sent}** delivered, **${failed}** failed.`);
   }
 
-  // ── !poll <question> | <option1> | <option2> ... ─────────────────────────
-  else if (cmd === "!poll") {
-    if (!isMod(message.member))
-      return message.reply("❌ You need the **Manage Messages** permission.");
+  // ── /poll ──────────────────────────────────────────────────────────────────
+  else if (commandName === "poll") {
+    if (!member.permissions.has(PermissionsBitField.Flags.ManageMessages))
+      return interaction.editReply("❌ You need the **Manage Messages** permission.");
 
-    const parts = message.content.slice(6).split("|").map(s => s.trim());
-    const question = parts[0];
-    const options = parts.slice(1);
-
-    if (!question) return message.reply("❌ Usage: `!poll <question> | <option1> | <option2>`");
-
+    const question = interaction.options.getString("question");
+    const optionsStr = interaction.options.getString("options");
+    const options = optionsStr ? optionsStr.split("|").map(s => s.trim()) : [];
     const emojis = ["1️⃣","2️⃣","3️⃣","4️⃣","5️⃣","6️⃣","7️⃣","8️⃣","9️⃣","🔟"];
 
-    let description = "";
-    if (options.length === 0) {
-      description = "React with 👍 or 👎";
-    } else {
-      options.forEach((opt, i) => { description += `${emojis[i]} ${opt}\n`; });
-    }
+    let description = options.length === 0
+      ? "React with 👍 or 👎"
+      : options.map((opt, i) => `${emojis[i]} ${opt}`).join("\n");
 
     const embed = new EmbedBuilder()
       .setColor(0x5865f2)
       .setTitle(`📊 Poll: ${question}`)
       .setDescription(description)
-      .setFooter({ text: `Poll by ${message.author.tag}` })
+      .setFooter({ text: `Poll by ${member.user.tag}` })
       .setTimestamp();
 
-    const pollMsg = await message.channel.send({ embeds: [embed] });
-    message.delete().catch(() => {});
+    await interaction.editReply({ embeds: [embed] });
+    const pollMsg = await interaction.fetchReply();
 
     if (options.length === 0) {
       await pollMsg.react("👍");
@@ -505,41 +602,43 @@ client.on("messageCreate", async (message) => {
     }
   }
 
-  // ── !say <message> ────────────────────────────────────────────────────────
-  else if (cmd === "!say") {
-    if (!isMod(message.member))
-      return message.reply("❌ You need the **Manage Messages** permission.");
+  // ── /say ───────────────────────────────────────────────────────────────────
+  else if (commandName === "say") {
+    if (!member.permissions.has(PermissionsBitField.Flags.ManageMessages))
+      return interaction.editReply("❌ You need the **Manage Messages** permission.");
 
-    const text = args.slice(1).join(" ");
-    if (!text) return message.reply("❌ Usage: `!say <message>`");
-    message.delete().catch(() => {});
-    message.channel.send(text);
+    const text = interaction.options.getString("message");
+    await interaction.channel.send(text);
+    await interaction.deleteReply().catch(() => {});
   }
 
-  // ── !embed <title> | <description> ───────────────────────────────────────
-  else if (cmd === "!embed") {
-    if (!isMod(message.member))
-      return message.reply("❌ You need the **Manage Messages** permission.");
+  // ── /embed ─────────────────────────────────────────────────────────────────
+  else if (commandName === "embed") {
+    if (!member.permissions.has(PermissionsBitField.Flags.ManageMessages))
+      return interaction.editReply("❌ You need the **Manage Messages** permission.");
 
-    const parts = message.content.slice(7).split("|").map(s => s.trim());
-    if (parts.length < 2) return message.reply("❌ Usage: `!embed <title> | <description>`");
+    const title = interaction.options.getString("title");
+    const description = interaction.options.getString("description");
+    const colorStr = interaction.options.getString("color");
+    const color = colorStr ? parseInt(colorStr.replace("#", ""), 16) : 0x5865f2;
 
     const embed = new EmbedBuilder()
-      .setColor(0x5865f2)
-      .setTitle(parts[0])
-      .setDescription(parts[1])
+      .setColor(isNaN(color) ? 0x5865f2 : color)
+      .setTitle(title)
+      .setDescription(description)
       .setTimestamp();
-    message.delete().catch(() => {});
-    message.channel.send({ embeds: [embed] });
+
+    await interaction.channel.send({ embeds: [embed] });
+    await interaction.deleteReply().catch(() => {});
   }
 
-  // ── !banlist ──────────────────────────────────────────────────────────────
-  else if (cmd === "!banlist") {
-    if (!hasPermission(message.member, PermissionsBitField.Flags.BanMembers))
-      return message.reply("❌ You need the **Ban Members** permission.");
+  // ── /banlist ───────────────────────────────────────────────────────────────
+  else if (commandName === "banlist") {
+    if (!member.permissions.has(PermissionsBitField.Flags.BanMembers))
+      return interaction.editReply("❌ You need the **Ban Members** permission.");
 
-    const bans = await message.guild.bans.fetch();
-    if (bans.size === 0) return message.reply("✅ No banned users.");
+    const bans = await guild.bans.fetch();
+    if (bans.size === 0) return interaction.editReply("✅ No banned users.");
 
     const list = bans.map(b => `**${b.user.tag}** (\`${b.user.id}\`) — ${b.reason || "No reason"}`).slice(0, 20).join("\n");
     const embed = new EmbedBuilder()
@@ -547,13 +646,13 @@ client.on("messageCreate", async (message) => {
       .setTitle(`🔨 Ban List (${bans.size})`)
       .setDescription(list + (bans.size > 20 ? `\n...and ${bans.size - 20} more.` : ""))
       .setTimestamp();
-    message.reply({ embeds: [embed] });
+    interaction.editReply({ embeds: [embed] });
   }
 
-  // ── !roles ────────────────────────────────────────────────────────────────
-  else if (cmd === "!roles") {
-    const roles = message.guild.roles.cache
-      .filter(r => r.id !== message.guild.id)
+  // ── /roles ─────────────────────────────────────────────────────────────────
+  else if (commandName === "roles") {
+    const roles = guild.roles.cache
+      .filter(r => r.id !== guild.id)
       .sort((a, b) => b.position - a.position)
       .map(r => `${r.toString()} — ${r.members.size} members`)
       .slice(0, 20)
@@ -561,70 +660,16 @@ client.on("messageCreate", async (message) => {
 
     const embed = new EmbedBuilder()
       .setColor(0x5865f2)
-      .setTitle(`📋 Server Roles (${message.guild.roles.cache.size - 1})`)
+      .setTitle(`📋 Server Roles (${guild.roles.cache.size - 1})`)
       .setDescription(roles || "No roles found.")
       .setTimestamp();
-    message.reply({ embeds: [embed] });
+    interaction.editReply({ embeds: [embed] });
   }
 
-  // ── !ping ─────────────────────────────────────────────────────────────────
-  else if (cmd === "!ping") {
-    message.reply(`🏓 Pong! Latency: **${client.ws.ping}ms**`);
+  // ── /ping ──────────────────────────────────────────────────────────────────
+  else if (commandName === "ping") {
+    interaction.editReply(`🏓 Pong! Latency: **${client.ws.ping}ms**`);
   }
-
-  // ── !help / !cmds ─────────────────────────────────────────────────────────
-  else if (cmd === "!help" || cmd === "!cmds") {
-    const embed = new EmbedBuilder()
-      .setColor(0x5865f2)
-      .setTitle("🛡️ Moderation Bot — Commands")
-      .addFields(
-        { name: "🔨 Moderation", value: [
-          "`!kick @user [reason]` — Kick a member",
-          "`!ban @user [reason]` — Ban a member",
-          "`!unban <userId>` — Unban a user",
-          "`!timeout @user <duration> [reason]` — Timeout a member (e.g. `10m`, `2h`, `1d`)",
-          "`!untimeout @user` — Remove timeout",
-          "`!mute @user [reason]` — Mute a member",
-          "`!unmute @user` — Unmute a member",
-          "`!warn @user <reason>` — Warn a member",
-          "`!banlist` — View all banned users",
-        ].join("\n") },
-        { name: "🔧 Channel Management", value: [
-          "`!purge <1-100>` — Delete messages",
-          "`!slowmode <seconds>` — Set slowmode (0 to disable)",
-          "`!lock` — Lock the current channel",
-          "`!unlock` — Unlock the current channel",
-        ].join("\n") },
-        { name: "👤 Member Management", value: [
-          "`!nick @user <nickname|reset>` — Set or reset nickname",
-          "`!role add/remove @user @role` — Add or remove a role",
-          "`!userinfo [@user]` — View user info",
-          "`!avatar [@user]` — View a user's avatar",
-        ].join("\n") },
-        { name: "📢 Communication", value: [
-          "`!announce #channel <message>` — Send an announcement",
-          "`!dm @user <message>` — DM a specific user",
-          "`!dmall <message>` — DM all server members",
-          "`!say <message>` — Make the bot say something",
-          "`!embed <title> | <description>` — Send a custom embed",
-          "`!poll <question> | <opt1> | <opt2>` — Create a poll",
-        ].join("\n") },
-        { name: "ℹ️ Info", value: [
-          "`!serverinfo` — View server info",
-          "`!roles` — List all server roles",
-          "`!ping` — Check bot latency",
-          "`!help` / `!cmds` — Show this list",
-        ].join("\n") },
-      )
-      .setFooter({ text: "Set LOG_CHANNEL_ID in .env to enable mod logs" });
-    message.reply({ embeds: [embed] });
-  }
-});
-
-// ─── READY ────────────────────────────────────────────────────────────────────
-client.once("ready", () => {
-  console.log(`✅ Logged in as ${client.user.tag}`);
-  client.user.setActivity("the server 🛡️", { type: 3 });
 });
 
 client.on("error", (err) => console.error("Client error:", err));
