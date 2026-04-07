@@ -16,6 +16,7 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMembers,
   ],
 });
 
@@ -135,6 +136,7 @@ client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
   const [cmd, ...args] = message.content.trim().split(/\s+/);
 
+  // !watch <url>
   if (cmd === "!watch") {
     const url = args[0];
     if (!url || !url.startsWith("http")) {
@@ -158,6 +160,7 @@ client.on("messageCreate", async (message) => {
     message.reply({ embeds: [embed] });
   }
 
+  // !unwatch <url>
   else if (cmd === "!unwatch") {
     const url = args[0];
     if (!url || !watchList.has(url)) {
@@ -168,6 +171,7 @@ client.on("messageCreate", async (message) => {
     message.reply(`🛑 Stopped watching \`${url}\``);
   }
 
+  // !watchlist
   else if (cmd === "!watchlist") {
     if (watchList.size === 0) {
       return message.reply("📭 No URLs are currently being watched. Use `!watch <url>` to start.");
@@ -186,12 +190,14 @@ client.on("messageCreate", async (message) => {
     message.reply({ embeds: [embed] });
   }
 
+  // !clearwatch
   else if (cmd === "!clearwatch") {
     watchList.clear();
     stopMonitor();
     message.reply("🧹 Cleared all watched URLs.");
   }
 
+  // !stock <url>
   else if (cmd === "!stock") {
     const url = args[0];
     if (!url || !url.startsWith("http")) {
@@ -223,6 +229,7 @@ client.on("messageCreate", async (message) => {
     }
   }
 
+  // !purge <amount>
   else if (cmd === "!purge") {
     const amount = parseInt(args[0]);
     if (!amount || amount < 1 || amount > 100) {
@@ -240,6 +247,7 @@ client.on("messageCreate", async (message) => {
     }
   }
 
+  // !restock <website> <purchase_url>
   else if (cmd === "!restock") {
     const website = args[0];
     const purchaseUrl = args[1];
@@ -265,10 +273,52 @@ client.on("messageCreate", async (message) => {
     message.delete().catch(() => {});
   }
 
+  // !dm <message>
+  else if (cmd === "!dm") {
+    if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+      return message.reply("❌ You need the **Administrator** permission to use this command.");
+    }
+
+    const dmMessage = args.join(" ");
+    if (!dmMessage) {
+      return message.reply("❌ Please provide a message. Example: `!dm New restock dropping tonight!`");
+    }
+
+    const statusMsg = await message.reply("📨 Sending DMs to all members...");
+
+    // Fetch all members
+    await message.guild.members.fetch();
+    const members = message.guild.members.cache.filter(m => !m.user.bot);
+
+    let sent = 0;
+    let failed = 0;
+
+    for (const [, member] of members) {
+      try {
+        const embed = new EmbedBuilder()
+          .setColor(0x5865f2)
+          .setTitle(`📢 Message from ${message.guild.name}`)
+          .setDescription(dmMessage)
+          .setFooter({ text: `Sent by ${message.author.tag}` })
+          .setTimestamp();
+
+        await member.send({ embeds: [embed] });
+        sent++;
+      } catch {
+        failed++;
+      }
+    }
+
+    await statusMsg.edit(`✅ DMs sent! **${sent}** delivered, **${failed}** failed (users with DMs disabled).`);
+    message.delete().catch(() => {});
+  }
+
+  // !ping
   else if (cmd === "!ping") {
     message.reply(`🏓 Pong! Latency: **${client.ws.ping}ms**`);
   }
 
+  // !help / !cmds
   else if (cmd === "!help" || cmd === "!cmds") {
     const embed = new EmbedBuilder()
       .setColor(0x5865f2)
@@ -281,6 +331,7 @@ client.on("messageCreate", async (message) => {
         { name: "`!stock <url>`", value: "Instantly check if an item is in stock" },
         { name: "`!purge <1-100>`", value: "Delete a number of messages in this channel" },
         { name: "`!restock <website> <purchase_url>`", value: "Manually send a restock alert" },
+        { name: "`!dm <message>`", value: "DM all server members (Admin only)" },
         { name: "`!ping`", value: "Check bot latency" },
         { name: "`!help` / `!cmds`", value: "Show this command list" },
       )
