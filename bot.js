@@ -3,6 +3,11 @@ const {
   Client, GatewayIntentBits, EmbedBuilder, PermissionsBitField,
   REST, Routes, SlashCommandBuilder
 } = require("discord.js");
+const {
+  joinVoiceChannel, createAudioPlayer, createAudioResource,
+  AudioPlayerStatus, getVoiceConnection, entersState, VoiceConnectionStatus
+} = require("@discordjs/voice");
+const googleTTS = require("google-tts-api");
 const fs = require("fs");
 const path = require("path");
 
@@ -13,7 +18,7 @@ const LOG_CHANNEL_ID = process.env.LOG_CHANNEL_ID || null;
 
 // Economy settings
 const COINS_PER_MESSAGE = 5;
-const EARN_COOLDOWN_MS = 10000;   // 10 seconds between earning
+const EARN_COOLDOWN_MS = 10000;
 const DAILY_REWARD = 100;
 const DAILY_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
@@ -24,29 +29,23 @@ const SHOP = {
   nachos:       { name: "Nachos 🧀",         price: 120 },
   nachofries:   { name: "Nacho Fries 🍟",    price: 90  },
 };
+
+// TTS language (Google TTS codes: en, en-au, en-gb, es, fr, etc.)
+const TTS_LANG = "en-au";
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ─── ECONOMY STORAGE ─────────────────────────────────────────────────────────
 const DATA_FILE = path.join(__dirname, "economy.json");
-
 function loadEconomy() {
-  try { return JSON.parse(fs.readFileSync(DATA_FILE, "utf8")); }
-  catch { return {}; }
+  try { return JSON.parse(fs.readFileSync(DATA_FILE, "utf8")); } catch { return {}; }
 }
-
 function saveEconomy(data) {
   try { fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2)); }
   catch (e) { console.error("Failed to save economy:", e.message); }
 }
-
 let economy = loadEconomy();
-
-// Returns a user's record, creating it if missing
 function getUser(userId) {
-  if (!economy[userId]) {
-    economy[userId] = { coins: 0, lastEarn: 0, lastDaily: 0, inventory: {} };
-  }
-  // Backfill any missing fields (in case of older saves)
+  if (!economy[userId]) economy[userId] = { coins: 0, lastEarn: 0, lastDaily: 0, inventory: {} };
   const u = economy[userId];
   if (u.coins === undefined) u.coins = 0;
   if (u.lastEarn === undefined) u.lastEarn = 0;
@@ -55,9 +54,44 @@ function getUser(userId) {
   return u;
 }
 
+// ─── VOICE / TTS ─────────────────────────────────────────────────────────────
+// One audio player per guild
+const players = new Map();
+
+function getPlayer(guildId) {
+  if (!players.has(guildId)) {
+    players.set(guildId, createAudioPlayer());
+  }
+  return players.get(guildId);
+}
+
+// Speak text in a given voice connection
+async function speak(connection, guildId, text) {
+  // Google TTS caps each URL at 200 chars — split long text
+  const urls = googleTTS.getAllAudioUrls(text, {
+    lang: TTS_LANG,
+    slow: false,
+    host: "https://translate.google.com",
+  });
+
+  const player = getPlayer(guildId);
+  connection.subscribe(player);
+
+  // Play each chunk in sequence
+  for (const { url } of urls) {
+    const resource = createAudioResource(url);
+    player.play(resource);
+    // Wait until this chunk finishes before playing the next
+    await new Promise((resolve) => {
+      const onIdle = () => { player.off(AudioPlayerStatus.Idle, onIdle); resolve(); };
+      player.on(AudioPlayerStatus.Idle, onIdle);
+    });
+  }
+}
+
 // ─── SLASH COMMANDS ──────────────────────────────────────────────────────────
 const commands = [
-  // ── Moderation ──
+  // Moderation
   new SlashCommandBuilder().setName("kick").setDescription("Kick a member")
     .addUserOption(o => o.setName("user").setDescription("User to kick").setRequired(true))
     .addStringOption(o => o.setName("reason").setDescription("Reason")),
@@ -79,7 +113,7 @@ const commands = [
     .addStringOption(o => o.setName("reason").setDescription("Reason").setRequired(true)),
   new SlashCommandBuilder().setName("ping").setDescription("Check bot latency"),
 
-  // ── GYG Economy ──
+  // GYG Economy
   new SlashCommandBuilder().setName("balance").setDescription("Check your GYG coin balance")
     .addUserOption(o => o.setName("user").setDescription("Check someone else's balance")),
   new SlashCommandBuilder().setName("daily").setDescription("Claim your daily GYG coins"),
@@ -101,6 +135,12 @@ const commands = [
   new SlashCommandBuilder().setName("addcoins").setDescription("(Admin) Add coins to a member")
     .addUserOption(o => o.setName("user").setDescription("User").setRequired(true))
     .addIntegerOption(o => o.setName("amount").setDescription("Amount").setRequired(true)),
+
+  // Voice / TTS
+  new SlashCommandBuilder().setName("join").setDescription("Make Dimo join your voice channel"),
+  new SlashCommandBuilder().setName("say").setDescription("Make Dimo speak in the voice channel")
+    .addStringOption(o => o.setName("text").setDescription("What Dimo should say").setRequired(true)),
+  new SlashCommandBuilder().setName("leave").setDescription("Make Dimo leave the voice channel"),
 ].map(c => c.toJSON());
 
 async function registerCommands() {
@@ -147,6 +187,7 @@ const client = new Client({
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildModeration,
+    GatewayIntentBits.GuildVoiceStates,
   ],
 });
 
@@ -159,7 +200,6 @@ client.once("ready", async () => {
 // ─── EARN COINS ON MESSAGE ───────────────────────────────────────────────────
 client.on("messageCreate", (message) => {
   if (message.author.bot || !message.guild) return;
-
   const user = getUser(message.author.id);
   const now = Date.now();
   if (now - user.lastEarn >= EARN_COOLDOWN_MS) {
@@ -173,7 +213,12 @@ client.on("messageCreate", (message) => {
 client.on("interactionCreate", async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
   const { commandName, member, guild } = interaction;
-  await interaction.deferReply().catch(() => {});
+
+  // Voice commands manage their own replies (deferred below individually)
+  const voiceCommands = ["join", "say", "leave"];
+  if (!voiceCommands.includes(commandName)) {
+    await interaction.deferReply().catch(() => {});
+  }
 
   // ══ MODERATION ═════════════════════════════════════════════════════════════
   if (commandName === "kick") {
@@ -287,9 +332,7 @@ client.on("interactionCreate", async (interaction) => {
     const u = getUser(interaction.user.id);
     const now = Date.now();
     const remaining = DAILY_COOLDOWN_MS - (now - u.lastDaily);
-    if (remaining > 0) {
-      return interaction.editReply(`⏳ You already claimed your daily! Come back in **${formatDuration(remaining)}**.`);
-    }
+    if (remaining > 0) return interaction.editReply(`⏳ You already claimed your daily! Come back in **${formatDuration(remaining)}**.`);
     u.coins += DAILY_REWARD;
     u.lastDaily = now;
     saveEconomy(economy);
@@ -317,9 +360,7 @@ client.on("interactionCreate", async (interaction) => {
     const item = SHOP[itemKey];
     if (!item) return interaction.editReply("❌ That item doesn't exist.");
     const u = getUser(interaction.user.id);
-    if (u.coins < item.price) {
-      return interaction.editReply(`❌ You need **${item.price}** 🪙 but only have **${u.coins}** 🪙.\nKeep chatting to earn more!`);
-    }
+    if (u.coins < item.price) return interaction.editReply(`❌ You need **${item.price}** 🪙 but only have **${u.coins}** 🪙.\nKeep chatting to earn more!`);
     u.coins -= item.price;
     u.inventory[itemKey] = (u.inventory[itemKey] || 0) + 1;
     saveEconomy(economy);
@@ -336,9 +377,7 @@ client.on("interactionCreate", async (interaction) => {
     const targetUser = interaction.options.getUser("user") || interaction.user;
     const u = getUser(targetUser.id);
     const items = Object.entries(u.inventory).filter(([, qty]) => qty > 0);
-    if (items.length === 0) {
-      return interaction.editReply(`🍽️ ${targetUser.username} hasn't bought any meals yet.`);
-    }
+    if (items.length === 0) return interaction.editReply(`🍽️ ${targetUser.username} hasn't bought any meals yet.`);
     const lines = items.map(([key, qty]) => `${SHOP[key]?.name || key} × **${qty}**`).join("\n");
     const embed = new EmbedBuilder()
       .setColor(0xf5a623)
@@ -350,9 +389,7 @@ client.on("interactionCreate", async (interaction) => {
   }
 
   else if (commandName === "leaderboard") {
-    const sorted = Object.entries(economy)
-      .sort((a, b) => (b[1].coins || 0) - (a[1].coins || 0))
-      .slice(0, 10);
+    const sorted = Object.entries(economy).sort((a, b) => (b[1].coins || 0) - (a[1].coins || 0)).slice(0, 10);
     if (sorted.length === 0) return interaction.editReply("No one has earned coins yet!");
     const medals = ["🥇", "🥈", "🥉"];
     let desc = "";
@@ -360,17 +397,11 @@ client.on("interactionCreate", async (interaction) => {
       const [userId, data] = sorted[i];
       const rank = medals[i] || `**${i + 1}.**`;
       let name = userId;
-      try {
-        const u = await client.users.fetch(userId);
-        name = u.username;
-      } catch {}
+      try { name = (await client.users.fetch(userId)).username; } catch {}
       desc += `${rank} ${name} — **${(data.coins || 0).toLocaleString()}** 🪙\n`;
     }
     const embed = new EmbedBuilder()
-      .setColor(0xf5a623)
-      .setTitle("🏆 GYG Coin Leaderboard")
-      .setDescription(desc)
-      .setTimestamp();
+      .setColor(0xf5a623).setTitle("🏆 GYG Coin Leaderboard").setDescription(desc).setTimestamp();
     interaction.editReply({ embeds: [embed] });
   }
 
@@ -398,6 +429,65 @@ client.on("interactionCreate", async (interaction) => {
     if (u.coins < 0) u.coins = 0;
     saveEconomy(economy);
     interaction.editReply(`✅ ${targetUser.username} now has **${u.coins.toLocaleString()}** 🪙.`);
+  }
+
+  // ══ VOICE / TTS ════════════════════════════════════════════════════════════
+  else if (commandName === "join") {
+    await interaction.deferReply();
+    const voiceChannel = member.voice.channel;
+    if (!voiceChannel) return interaction.editReply("❌ You need to be in a voice channel first.");
+
+    try {
+      joinVoiceChannel({
+        channelId: voiceChannel.id,
+        guildId: guild.id,
+        adapterCreator: guild.voiceAdapterCreator,
+      });
+      interaction.editReply(`✅ Joined **${voiceChannel.name}**! Use \`/say\` to make me speak.`);
+    } catch (err) {
+      console.error("Join error:", err);
+      interaction.editReply("❌ Could not join the voice channel.");
+    }
+  }
+
+  else if (commandName === "say") {
+    await interaction.deferReply();
+    const text = interaction.options.getString("text");
+    const voiceChannel = member.voice.channel;
+
+    let connection = getVoiceConnection(guild.id);
+
+    // If not already connected, join the user's channel
+    if (!connection) {
+      if (!voiceChannel) return interaction.editReply("❌ I'm not in a voice channel. Join one and use `/join`, or run this while in a voice channel.");
+      try {
+        connection = joinVoiceChannel({
+          channelId: voiceChannel.id,
+          guildId: guild.id,
+          adapterCreator: guild.voiceAdapterCreator,
+        });
+      } catch {
+        return interaction.editReply("❌ Could not join the voice channel.");
+      }
+    }
+
+    try {
+      await entersState(connection, VoiceConnectionStatus.Ready, 10000);
+      interaction.editReply(`🗣️ Speaking: "${text}"`);
+      await speak(connection, guild.id, text);
+    } catch (err) {
+      console.error("Speak error:", err);
+      interaction.editReply("❌ Something went wrong trying to speak.");
+    }
+  }
+
+  else if (commandName === "leave") {
+    await interaction.deferReply();
+    const connection = getVoiceConnection(guild.id);
+    if (!connection) return interaction.editReply("❌ I'm not in a voice channel.");
+    connection.destroy();
+    players.delete(guild.id);
+    interaction.editReply("👋 Left the voice channel.");
   }
 });
 
